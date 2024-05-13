@@ -72,7 +72,7 @@ docker exec -it myserver bash
 sed -i 's/It works!/Bonjour/' /usr/local/apache2/htdocs/index.html
 ```
 
-### Pour lier des dossiers de l'hôte sur le container
+### Pour lier des dossiers de l'hôte au container
 
 ```bash
 # Créer un nouveau projet statique
@@ -89,4 +89,107 @@ curl http://<username>-server.eddi.cloud:8080/
 
 # Inspecter le binding
 docker inspect ofig # regarder les propriétés "HostConfig.Binds" et "Mounts"
+```
+
+### Créer une image
+
+La première chose à faire est de créer un fichier `Dockerfile` (sans extension) à la racine du projet
+
+```
+# Utiliser une image de base officielle Node.js comme runtime
+FROM node:20
+
+# Définir un répertoire de travail à l'intérieur du conteneur (au choix, mais typique pour les projets Node)
+WORKDIR /usr/src/app
+
+# Copier le package.json et le package-lock.json dans le répertoire de travail
+COPY package*.json ./
+
+# Installer les dépendances
+RUN npm install
+
+# Copier le code de l'application dans le conteneur
+COPY . .
+
+# Définir les variables d'environnement
+ENV PORT=3001
+
+# Exposer le port spécifié dans la variable d'environnement
+EXPOSE $PORT
+
+# Définir la commande pour exécuter votre application
+CMD ["node", "index.js"]
+```
+
+On peut maintenant créer l'image et deployer un container se basant sur elle :
+
+```bash
+# Aller dans le dossier
+cd myproject
+
+# Créer l'image (myproject) à partir des sources (.)
+docker build -t myproject .
+
+# Vérifier
+docker images
+
+# Déployer un conteneur
+docker run -d -p 3001:3001 --name myproject myproject
+
+# Voir les logs du serveur
+docker logs myproject
+
+# Tester
+curl http://localhost:3001
+```
+
+### Push une image sur DockerHub
+
+```bash
+# Se connecter à DockerHub depuis son CLI (se créer un compte sur DockerHub via son compte Github si besoin)
+docker login
+
+# Tagger l'image
+docker tag myproject:latest <username>/myproject:latest
+
+# Push l'image
+docker push <username>/myproject:latest
+
+# Vérification
+curl https://hub.docker.com/repository/docker/<username>/myproject/general
+
+# ❗️ Passer l'image privé dans les settings :
+# https://hub.docker.com/repository/docker/<username>/myproject/settings
+
+# ❗️ Si le build est fait depuis MacOS, il faut aussi exporter une image pour Linux AMD64. Sinon il ne sera pas possible de lancer un container depuis la VM Kourou
+docker buildx build --platform linux/amd64 -t <username>/myproject:latest-ubuntu --push .
+```
+
+### Pull depuis DockerHub
+
+```bash
+# Créer un conteneur à bind sur le port 3001
+docker run -d -p 3001:3001 --name myproject <username>/myproject --restart=always
+docker run -d -p 3001:3001 --name myproject <username>/myproject:latest-ubuntu --restart=always # ❗️ OU ❗️ si le build a été fait depuis MacOS
+
+
+# Créer une config Nginx pour le sous domaine 'myproject'
+sudo bash -c 'cat <<EOF >> /etc/nginx/sites-available/myproject.conf
+server {
+  listen 80;
+  server_name myproject.<username>-server.eddi.cloud;
+  location / {
+    proxy_pass http://localhost:3001;
+  }
+}
+EOF'
+
+# Créer un lien symbolique pour activer la configuration
+sudo ln -s /etc/nginx/sites-available/myproject.conf /etc/nginx/sites-enabled/myproject.conf
+
+# Relancer nginx
+sudo systemctl reload nginx
+
+# Tester
+curl http://myproject.<username>-server.eddi.cloud/
 ```
